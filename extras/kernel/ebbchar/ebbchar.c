@@ -30,6 +30,7 @@ static short  size_of_message;              ///< Used to remember the size of th
 static int    numberOpens = 0;              ///< Counts the number of times the device is opened
 static struct class*  ebbcharClass  = NULL; ///< The device-driver class struct pointer
 static struct device* ebbcharDevice = NULL; ///< The device-driver device struct pointer
+static char *msg_ptr;
 
 // The prototype functions for the character driver -- must come before the struct definition
 static int     dev_open(struct inode *, struct file *);
@@ -57,6 +58,8 @@ static struct file_operations fops =
  */
 static int __init ebbchar_init(void){
    printk(KERN_INFO "EBBChar: Initializing the EBBChar LKM\n");
+
+   msg_ptr = message;
 
    // Try to dynamically allocate a major number for the device -- more difficult but worth it
    majorNumber = register_chrdev(0, DEVICE_NAME, &fops);
@@ -118,6 +121,7 @@ static int dev_open(struct inode *inodep, struct file *filep){
  *  @param len The length of the b
  *  @param offset The offset if required
  */
+/*
 static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset){
    int error_count = 0;
    // copy_to_user has the format ( * to, *from, size) and returns 0 on success
@@ -125,12 +129,34 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
 
    if (error_count==0){            // if true then have success
       printk(KERN_INFO "EBBChar: Sent %d characters to the user\n", size_of_message);
+      printk(KERN_INFO "EBBChar: Sent message [%s]", message);
       return (size_of_message=0);  // clear the position to the start and return 0
    }
    else {
       printk(KERN_INFO "EBBChar: Failed to send %d characters to the user\n", error_count);
       return -EFAULT;              // Failed -- return a bad address message (i.e. -14)
    }
+}
+*/
+static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset) {
+    int bytes_read = 0;
+    /* If we’re at the end, loop back to the beginning */
+    if (*msg_ptr == 0) {
+        msg_ptr = message;
+
+    }
+    /* Put data in the buffer */
+    while (len && *msg_ptr) {
+        /* Buffer is in user data, not kernel, so you can’t just reference
+         * with a pointer. The function put_user handles this for us */
+        put_user(*(msg_ptr++), buffer++);
+        len--;
+        bytes_read++;
+
+    }
+    printk(KERN_INFO "EBBChar: Sent %d characters to the user\n", bytes_read);
+    return bytes_read;
+
 }
 
 /** @brief This function is called whenever the device is being written to from user space i.e.
@@ -142,9 +168,16 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
  *  @param offset The offset if required
  */
 static ssize_t dev_write(struct file *filep, const char *buffer, size_t len, loff_t *offset){
-   sprintf(message, "%s(%zu letters)", buffer, len);   // appending received string with its length
-   size_of_message = strlen(message);                 // store the length of the stored message
+   if (copy_from_user(message, buffer, len)) {
+       printk(KERN_ALERT "EBBChar: kernel failed  to copy message from user space\n");
+       return -EFAULT;
+   }
+   // store the length of the stored message
+   /*size_of_message = strlen(message);*/
+   size_of_message = len;
+   message[len] = '\0';
    printk(KERN_INFO "EBBChar: Received %zu characters from the user\n", len);
+   printk(KERN_INFO "EBBchar: Received [%s].", message);
    return len;
 }
 
